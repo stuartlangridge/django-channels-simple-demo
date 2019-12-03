@@ -2,8 +2,83 @@
 
 <ul>
 {% for choice in question.choice_set.all %}
-    <li>{{ choice.choice_text }} -- {{ choice.votes }} vote{{ choice.votes|pluralize }}</li>
+    <li data-choice-id="{{ choice.id }}">{{ choice.choice_text }} -- <output>{{ choice.votes }}</output> 
+    vote{{ choice.votes|pluralize }}</li>
 {% endfor %}
 </ul>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.3/dist/Chart.min.js" integrity="sha256-R4pqcOYV8lt7snxMQO/HSbVCFRPMdrhAFMH+vr9giYI=" crossorigin="anonymous"></script>
+
+<canvas id="myChart" width="300" height="200"></canvas>
+<script>
+var ctx = document.getElementById('myChart').getContext('2d');
+var myChart = new Chart(ctx, { type: 'bar',
+    data: {
+        labels: [
+            {% for choice in question.choice_set.all %}
+            "{{ choice.choice_text }}" {% if not forloop.last %},{% endif %}
+            {% endfor %}
+        ],
+        datasets: [{
+            label: '# of Votes',
+            data: [
+                {% for choice in question.choice_set.all %}
+                {{ choice.votes }}{% if not forloop.last %},{% endif %}
+                {% endfor %}
+            ],
+        }]
+    },
+    options: {
+        responsive: false, scales: { yAxes: [{ ticks: { beginAtZero: true } }] }
+    }
+});
+
+const CHOICE_INDICES = {
+{% for choice in question.choice_set.all %}
+    {{ choice.id }}: {{ forloop.counter0 }}{% if not forloop.last %},{% endif %}
+{% endfor %}
+};
+
+</script>
+
 <a href="{% url 'polls:detail' question.id %}">Vote again?</a>
+
+<script>
+
+let QUESTION_ID = '{{ question.id }}';
+let updateSocket;
+
+function connectSocket() {
+    updateSocket = new WebSocket(
+        'ws://' + window.location.host +
+        '/ws/polls/' + QUESTION_ID);
+
+    updateSocket.onmessage = function(e) {
+        console.log("Received a message from the socket:", e.data);
+        try {
+            let j = JSON.parse(e.data);
+            if (j && j.type == "votes") {
+                j.vote_totals.forEach(([choice_id, votes]) => {
+                    document.querySelector(`li[data-choice-id="${choice_id}"] output`).textContent = votes;
+                    let choice_index = CHOICE_INDICES[choice_id];
+                    myChart.data.datasets[0].data[choice_index] = votes;
+                    myChart.update();
+                })
+            }
+        } catch(e) {}
+    };
+
+    updateSocket.onclose = function(e) {
+        console.error('Chat socket closed unexpectedly; reconnecting');
+        setTimeout(connectSocket, 1000);
+    };
+
+
+    updateSocket.onopen = function(e) {
+        console.log("Socket connected; sending a ping");
+        updateSocket.send("echo");
+    }
+}
+connectSocket();
+
+</script>
